@@ -1,0 +1,177 @@
+// Pet renderer. Pure DOM/canvas — no framework. Driven by IPC from main.
+// Avoids any module-level `import`/`export` — tsc would emit CJS `exports`
+// references that browser <script> tags can't resolve.
+export {};
+const cp = (window as unknown as { claudePet: any }).claudePet;
+
+interface LoadPayload {
+  manifest: any;
+  spritesheetUrl: string;
+  scale: number;
+}
+interface StatePayload {
+  state: string;
+  text?: string;
+  holdMs: number;
+}
+
+const STATE_ROWS = ["idle", "wave", "run", "failed", "review", "jump", "extra1", "extra2"];
+
+const canvas = document.getElementById("pet") as HTMLCanvasElement;
+const ctx = canvas.getContext("2d")!;
+const bubble = document.getElementById("bubble") as HTMLDivElement;
+
+let sheet: HTMLImageElement | null = null;
+let manifest: any = null;
+let scale = 0.5;
+let currentState = "idle";
+let frameIdx = 0;
+let lastFrameMs = 0;
+let stateTimeout: ReturnType<typeof setTimeout> | null = null;
+let bubbleTimeout: ReturnType<typeof setTimeout> | null = null;
+
+// Grid is auto-detected from the spritesheet's true pixel size (see onLoad),
+// because packs differ: codex packs are 8 cols × 9 rows, our built-ins are
+// 9 cols × 8 rows. Hardcoding either one mis-slices frames and makes the
+// animation cycle too fast / read across cell boundaries.
+let detectedCols = 0;
+let detectedRows = 0;
+const DEFAULT_FRAME_MS = 220; // calm cadence ≈ codex; ~1.8s for an 8-frame loop
+
+function frameW() { return manifest?.frame?.w ?? 192; }
+function frameH() { return manifest?.frame?.h ?? 208; }
+function frameCount(state: string): number {
+  // Explicit per-state override wins; otherwise use the detected column count.
+  return manifest?.frames?.[state] ?? (detectedCols || 6);
+}
+function frameMs(state: string): number {
+  const dur = manifest?.durations?.[state];
+  if (typeof dur === "number") return dur / frameCount(state);
+  return DEFAULT_FRAME_MS;
+}
+
+function resize() {
+  canvas.width = frameW();
+  canvas.height = frameH();
+  canvas.style.width = `${Math.round(frameW() * scale)}px`;
+  canvas.style.height = `${Math.round(frameH() * scale)}px`;
+}
+
+function draw() {
+  if (!sheet || !manifest) return;
+  let row = STATE_ROWS.indexOf(currentState);
+  if (row < 0) return;
+  // Don't index past the sheet's real row count (packs with fewer rows).
+  if (detectedRows && row >= detectedRows) row = 0;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(
+    sheet,
+    frameIdx * frameW(),
+    row * frameH(),
+    frameW(),
+    frameH(),
+    0,
+    0,
+    frameW(),
+    frameH(),
+  );
+}
+
+function tick(now: number) {
+  if (sheet && manifest) {
+    const interval = frameMs(currentState);
+    if (now - lastFrameMs >= interval) {
+      frameIdx = (frameIdx + 1) % frameCount(currentState);
+      lastFrameMs = now;
+      draw();
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+function setState(state: string) {
+  if (currentState === state) return;
+  currentState = state;
+  frameIdx = 0;
+  lastFrameMs = 0;
+  draw();
+}
+
+function showBubble(text: string, ms = 4000) {
+  bubble.textContent = text;
+  bubble.classList.add("show");
+  if (bubbleTimeout) clearTimeout(bubbleTimeout);
+  bubbleTimeout = setTimeout(() => bubble.classList.remove("show"), ms);
+}
+
+cp.onLoad((p: LoadPayload) => {
+  manifest = p.manifest;
+  scale = p.scale;
+  resize();
+  const img = new Image();
+  img.onload = () => {
+    sheet = img;
+    detectedCols = Math.max(1, Math.round(img.naturalWidth / frameW()));
+    detectedRows = Math.max(1, Math.round(img.naturalHeight / frameH()));
+    frameIdx = 0;
+    draw();
+  };
+  img.src = p.spritesheetUrl;
+});
+
+cp.onScale((s: number) => { scale = s; resize(); });
+
+cp.onState((s: StatePayload) => {
+  setState(s.state);
+  if (s.text) showBubble(s.text, s.holdMs > 0 ? s.holdMs : 6000);
+  if (stateTimeout) clearTimeout(stateTimeout);
+  if (s.holdMs > 0) {
+    stateTimeout = setTimeout(() => setState("idle"), s.holdMs);
+  }
+});
+
+// Manual drag: holding the pet moves the window; a click without movement
+// (below the threshold) triggers the focus-session jump. We can't use
+// -webkit-app-region:drag here because the pet must stay clickable.
+let dragging = false;
+let startSX = 0;
+let startSY = 0;
+let baseX = 0;
+let baseY = 0;
+let moved = false;
+const DRAG_THRESHOLD = 4;
+
+canvas.addEventListener("mousedown", async (e) => {
+  if (e.button !== 0) return; // only left button drags; right opens the menu
+  dragging = true;
+  moved = false;
+  startSX = e.screenX;
+  startSY = e.screenY;
+  const pos = await cp.getWinPos();
+  baseX = pos[0];
+  baseY = pos[1];
+  e.preventDefault();
+});
+
+// Right-click anywhere on the pet → native context menu (Settings / Quit / …).
+canvas.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  dragging = false;
+  cp.contextMenu();
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!dragging) return;
+  const dx = e.screenX - startSX;
+  const dy = e.screenY - startSY;
+  if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) moved = true;
+  if (moved) cp.moveWin(baseX + dx, baseY + dy);
+});
+
+window.addEventListener("mouseup", () => {
+  if (!dragging) return;
+  dragging = false;
+  if (!moved) cp.click(); // a tap, not a drag → jump to terminal
+});
+
+requestAnimationFrame(tick);

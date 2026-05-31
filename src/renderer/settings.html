@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Claude Pet · Settings</title>
+    <style>
+      body { font: 13px -apple-system, sans-serif; padding: 18px; color: #222; }
+      h1 { font-size: 16px; margin: 0 0 12px; }
+      .pets { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+      .pet { border: 1px solid #ddd; border-radius: 8px; padding: 10px; cursor: pointer; }
+      .pet.active { border-color: #007aff; background: #eef6ff; }
+      .pet h3 { margin: 0 0 4px; font-size: 13px; }
+      .pet p { margin: 0; color: #888; font-size: 11px; }
+      button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #ccc; background: #f7f7f7; cursor: pointer; }
+      button.primary { background: #007aff; color: #fff; border-color: #007aff; }
+      label { display: block; margin: 14px 0 4px; font-weight: 600; }
+      input[type=range] { width: 100%; }
+      .row { display: flex; gap: 8px; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <h1>Claude Pet</h1>
+    <label>Pet</label>
+    <div class="pets" id="pets"></div>
+    <div class="row" style="margin-top:12px">
+      <button id="import">Import pet folder…</button>
+      <span id="importStatus" style="color:#888"></span>
+    </div>
+    <label>Scale</label>
+    <input type="range" id="scale" min="0.25" max="1.5" step="0.05" />
+    <p style="color:#888; margin-top:24px">
+      Pets live in <code>~/.claude-pet/pets/</code>. Format: petdex-compatible
+      (8×9 spritesheet, 192×208 frames, rows = idle / wave / run / failed /
+      review / jump / extra1 / extra2).
+    </p>
+    <script type="module" src="settings.js"></script>
+  </body>
+</html>

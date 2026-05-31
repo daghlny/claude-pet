@@ -1,0 +1,39 @@
+{
+  "name": "claude-pet",
+  "version": "0.1.0",
+  "description": "A desktop pet for Claude Code. Reacts to session events with petdex-compatible sprites.",
+  "main": "dist/main/index.js",
+  "bin": {
+    "claude-pet": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p src/renderer/tsconfig.json && node scripts/copy-assets.js",
+    "gen:builtins": "node scripts/generate-builtins.js",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron . --inspect",
+    "cli": "node dist/cli/index.js",
+    "pack": "npm run build && electron-builder --mac --dir",
+    "dist": "npm run build && electron-builder --mac"
+  },
+  "keywords": ["claude-code", "desktop-pet", "petdex", "codex-pets"],
+  "license": "MIT",
+  "dependencies": {
+    "chokidar": "^3.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "pngjs": "^7.0.0",
+    "typescript": "^5.4.0"
+  },
+  "build": {
+    "appId": "dev.claudepet.app",
+    "productName": "Claude Pet",
+    "files": ["dist/**/*", "assets/**/*", "hooks/**/*"],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": "dmg"
+    }
+  }
+}

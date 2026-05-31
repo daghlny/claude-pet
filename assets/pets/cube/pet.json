@@ -1,0 +1,17 @@
+{
+  "name": "Cube",
+  "slug": "cube",
+  "kind": "builtin",
+  "tags": [
+    "builtin"
+  ],
+  "frame": {
+    "w": 192,
+    "h": 208
+  },
+  "grid": {
+    "cols": 9,
+    "rows": 8
+  },
+  "spritesheet": "spritesheet.png"
+}

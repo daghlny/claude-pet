@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+        cursor: default;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+      #bubble {
+        position: absolute;
+        top: 6px;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: 240px;
+        padding: 6px 10px;
+        background: rgba(28, 28, 30, 0.92);
+        color: #fff;
+        font-size: 12px;
+        border-radius: 10px;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        overflow: hidden;
+        opacity: 0;
+        transition: opacity 0.2s;
+        pointer-events: none;
+        -webkit-app-region: no-drag;
+      }
+      #bubble.show { opacity: 1; }
+      #stage {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        -webkit-app-region: no-drag;
+      }
+      canvas { image-rendering: pixelated; cursor: grab; }
+      canvas:active { cursor: grabbing; }
+    </style>
+  </head>
+  <body>
+    <div id="bubble"></div>
+    <div id="stage"><canvas id="pet"></canvas></div>
+    <script type="module" src="pet.js"></script>
+  </body>
+</html>
