@@ -3,63 +3,68 @@
 [English](README.md) · **简体中文**
 
 一个为 [Claude Code](https://claude.com/claude-code) 打造的桌面宠物。它住在你的
-桌面上，会对你的 Claude Code 会话状态做出反应——工作中、等待中、已完成、出错——
-并且点一下就能跳回它所属的那个终端会话。
+桌面上，会对 Claude Code 会话状态做出反应——工作中、等待中、已完成、出错——
+点一下还能跳回它所属的那个终端会话。
 
-兼容 petdex / codex-pets 的素材格式：把任意 `pet.json` +
-`spritesheet.{png,webp}` 包放进 `~/.claude-pet/pets/<slug>/`，它就会出现在选择器里。
+v0.1 仅支持 macOS。
 
-v0.1 仅支持 macOS。跨平台的基础已经铺好
-（`focusTerminal.ts` 和 hook 脚本是仅有的 macOS 专属部分）。
+## 快速开始
 
-## 安装
-
-一键安装：
+### 1. 安装并启动（一行命令）
 
 ```bash
-./install.sh        # 安装依赖 + 生成内置宠物 + 编译 + 接入 hooks
-npm start           # 启动 Electron 应用
+curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/install.sh | bash
 ```
 
-`./install.sh --no-hooks` 会编译全部内容，但不改动
-`~/.claude/settings.json`。等价的手动步骤：
+这条命令会自动拉取代码、编译、接入 Claude Code 钩子，并启动宠物（在菜单栏找
+🐾）。需要 Node.js 18+ 和 git。之后在终端里启动任意 `claude` 会话，宠物就会在
+工具运行、权限提示、任务完成和出错时做出对应动画。
+
+### 2. 更换宠物素材
+
+打开 [codex-pets.net](https://codex-pets.net/)，挑一只宠物，记下它的 **slug**
+（页面 URL 的最后一段，例如 `deepseek`），然后：
 
 ```bash
-npm install
-npm run gen:builtins       # 生成 2 个内置宠物的精灵图
-npm run build              # 编译 TS + 拷贝 renderer HTML
-node dist/cli/index.js install   # 把 hooks 写入 ~/.claude/settings.json
-npm start                  # 启动 Electron 应用
+claude-pet import "https://codex-pets.net/api/pets/deepseek/download"
 ```
 
-然后在 Terminal / iTerm 里启动任意 `claude` 会话——宠物就会在权限提示、
-工具运行、任务完成和出错时做出对应动画。
-
-## CLI
+右键点击宠物（或点菜单栏 🐾）→ 在列表里选中它即可。也可以导入本地文件夹或
+`.zip`：
 
 ```bash
-claude-pet install     # 向 ~/.claude/settings.json 添加 hook 条目
-claude-pet status      # 查看安装状态 + 事件日志路径
-claude-pet uninstall   # 移除 hook 条目
-claude-pet import <src># 导入一个宠物包（文件夹 | .zip | http(s) 的 .zip URL）
+claude-pet import ./my-pet
+claude-pet import ./my-pet.zip
 ```
 
-（如果你还没有链接 `claude-pet` 这个命令，请用
-`node dist/cli/index.js <命令>` 的形式调用。）
+> 还没有链接 `claude-pet` 命令？用
+> `node ~/.claude-pet/app/dist/cli/index.js import …` 代替。
 
-`claude-pet install` 是幂等的——重复运行只会替换之前由 claude-pet 写入的
-hook 条目，其余设置保持不变（会在 `settings.json` 旁边写一份
-`.claude-pet.bak` 备份）。
+### 3. 关闭（永久）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash
+```
+
+这会移除 Claude Code 钩子**并**退出应用——它不会再回来。加 `-s -- --purge`
+可同时删除应用本体、宠物和设置：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash -s -- --purge
+```
+
+（右键 → Quit 目前只是关闭窗口；上面这条一行命令才是真正的"关闭开关"。）
+
+---
 
 ## 工作原理
 
-1. CLI 会为以下 Claude Code 事件注册 `hooks/claude-pet-emit.sh`：
-   `SessionStart`、`PreToolUse`、`PostToolUse`、`Stop`、
-   `StopFailure`、`Notification`、`SessionEnd`。
-2. 每次事件触发时，脚本会沿父进程树向上查找，记录终端应用 +
-   控制 tty，然后向 `~/.claude-pet/events.jsonl` 追加一行 JSON。
-3. Electron 主进程用 `chokidar` 跟踪（tail）该文件，并把每个事件映射到
-   一个宠物动画状态 + 气泡文字：
+1. 安装脚本会为以下 Claude Code 事件注册 `hooks/claude-pet-emit.sh`：
+   `SessionStart`、`PreToolUse`、`PostToolUse`、`Stop`、`StopFailure`、
+   `Notification`、`SessionEnd`。
+2. 每次事件触发时，脚本记录来源终端应用 + tty，并向
+   `~/.claude-pet/events.jsonl` 追加一行 JSON。
+3. Electron 应用跟踪（tail）该文件，把每个事件映射到动画 + 气泡：
 
    | 事件                                  | 状态     | 气泡                      |
    |--------------------------------------|----------|--------------------------|
@@ -71,11 +76,31 @@ hook 条目，其余设置保持不变（会在 `settings.json` 旁边写一份
    | `StopFailure`                        | `failed` | error\_type              |
    | `SessionEnd`                         | `idle`   | “Session ended.”         |
 
-4. 点击宠物 → 一段 AppleScript 会在 Terminal.app 或 iTerm2 中查找记录下来的
-   tty，并把那个具体的标签页提到最前。若失败则退而求其次激活终端应用，
-   再不行则在 Finder 中打开 `cwd`。
+4. 点击宠物 → AppleScript 会把当初运行 Claude Code 的那个具体
+   Terminal.app / iTerm2 标签页提到最前（失败则退而激活应用，再不行则打开
+   `cwd`）。
 
-## 宠物包格式（兼容 petdex）
+## CLI
+
+```bash
+claude-pet install     # 向 ~/.claude/settings.json 添加钩子条目
+claude-pet uninstall   # 移除钩子条目
+claude-pet status      # 查看安装状态 + 事件日志路径
+claude-pet import <src># 导入宠物包（文件夹 | .zip | http(s) 的 .zip URL）
+```
+
+## 手动安装
+
+如果你不想用管道执行 `bash`：
+
+```bash
+git clone https://github.com/daghlny/claude-pet.git
+cd claude-pet
+./install.sh                 # 与一行命令等价，只是在本地运行
+# 或：./install.sh --no-hooks --no-launch  然后  npm start
+```
+
+## 宠物包格式（兼容 petdex / codex-pets）
 
 ```
 my-pet/
@@ -83,91 +108,25 @@ my-pet/
 └── spritesheet.png      # 或 .webp
 ```
 
-`spritesheet.png`：8 行 × 9 列，每帧 **192×208**
-（总计 **1728×1664**）。行顺序：
-
-```
-0 idle    1 wave   2 run    3 failed
-4 review  5 jump   6 extra1 7 extra2
-```
-
-`pet.json`：
+精灵图是一个帧网格：行代表状态，列代表动画帧。行顺序：
+`idle, wave, run, failed, review, jump, extra1, extra2`。帧网格会从图片自动
+探测，所以两种排布都能用（内置宠物是 9×8，每帧 192×208；codex 包是 8×9）。
+最小化的 `pet.json`：
 
 ```json
-{
-  "name": "Blob",
-  "slug": "blob",
-  "tags": ["builtin"],
-  "kind": "builtin",
-  "spritesheet": "spritesheet.png",
-  "frame":   { "w": 192, "h": 208 },
-  "grid":    { "cols": 9, "rows": 8 },
-  "frames":    { "idle": 6, "run": 6 },
-  "durations": { "idle": 1100, "run": 800 }
-}
+{ "name": "Blob", "slug": "blob", "spritesheet": "spritesheet.png" }
 ```
 
-`frames` / `durations` 是可选的（默认：每状态 6 帧，循环 1100 毫秒）。
-
-把你的宠物文件夹放进 `~/.claude-pet/pets/<slug>/`，或在应用内使用
-**Settings → Import pet folder…**。由 petdex 分发的宠物（`npx petdex
-install <slug>`）也遵循同样的约定。
-
-### 通过 CLI 导入宠物包
-
-```bash
-claude-pet import ./my-pet                       # 本地文件夹
-claude-pet import ./my-pet.zip                    # 本地 zip
-claude-pet import https://example.com/my-pet.zip  # 远程 zip
-```
-
-即使 zip 把宠物包套在了一层顶层文件夹里，导入器也能定位到 `pet.json`，
-校验后把它拷贝进 `~/.claude-pet/pets/<slug>/`。codex-pets 的清单字段
-（`id` / `displayName` / `spritesheetPath`）会被自动接受并归一化。
-
-> zip / URL 导入会调用系统的 `unzip` 和 `curl`（macOS 和大多数 Linux 发行版
-> 都自带）。
-
-### 使用来自 codex-pets.net 的宠物
-
-[codex-pets.net](https://codex-pets.net/) 上有一个社区宠物包的画廊，它们使用
-相同的精灵图格式。浏览该网站，挑一个你喜欢的宠物，记下它的 **slug**
-（即其页面 URL 的最后一段路径，例如 `deepseek`）。
-
-**最简单——直接从网站导入到 Claude Pet：**
-
-```bash
-claude-pet import "https://codex-pets.net/api/pets/<slug>/download"
-# 例如
-claude-pet import "https://codex-pets.net/api/pets/deepseek/download"
-```
-
-这一条命令就会下载宠物包并安装到 `~/.claude-pet/pets/<slug>/`。重启
-Claude Pet（或直接重新启动），然后从托盘菜单里选中它即可。
-
-**已经用 codex 自带的工具装过了？** codex-pets 会安装到
-`~/.codex/pets/<slug>/`。把导入器指向那个文件夹，即可拷贝进 Claude Pet：
-
-```bash
-# 在执行过 `npx codex-pets add deepseek` 之后
-claude-pet import ~/.codex/pets/deepseek
-```
-
-> Claude Pet 从 `~/.claude-pet/pets/` 读取，而 codex 从 `~/.codex/pets/`
-> 读取。两者互相独立——`import` 负责把宠物包从 codex 的位置（或直接从网站）
-> 搭桥导入到 Claude Pet。
+codex-pets 的清单字段（`id` / `displayName` / `spritesheetPath`）会被自动接受
+并归一化。宠物包存放在 `~/.claude-pet/pets/<slug>/`，导入器会替你拷贝过去。
+内置的 `blob` 和 `cube` 由 `npm run gen:builtins` 程序化生成（仓库里没有二进制
+美术资源）。
 
 ## 扩展到 macOS 之外
 
-macOS 专属的代码被隔离在：
-
-- `hooks/claude-pet-emit.sh` —— 使用 `ps` 遍历进程树。
-  Linux 可直接使用；Windows 需要一个 `.ps1` 等价实现。
-- `src/main/focusTerminal.ts` —— AppleScript。请替换为 `wmctrl`
-  （Linux）或 `powershell` 的窗口激活（Windows），并根据
-  `process.platform` 分派。
-
-事件日志、宠物加载器、状态映射器和 renderer 都是平台无关的。
+macOS 专属代码被隔离在 `hooks/claude-pet-emit.sh`（使用 `ps`，Linux 可直接用）
+和 `src/main/focusTerminal.ts`（AppleScript，可替换为 `wmctrl` / PowerShell 并
+按 `process.platform` 分派）。其余部分都是平台无关的。
 
 ## 许可证
 
