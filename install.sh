@@ -56,25 +56,31 @@ npm run gen:builtins
 echo "▸ building…"
 npm run build
 
+# Expose the `claude-pet` command on PATH. Best-effort: if `npm link` can't
+# write to the global prefix, we fall back to calling the local entrypoint.
+echo "▸ linking the claude-pet command…"
+if npm link >/dev/null 2>&1 && command -v claude-pet >/dev/null 2>&1; then
+  CP="claude-pet"
+else
+  CP="node $SRC_DIR/dist/cli/index.js"
+  echo "  (couldn't link globally — use \`$CP\` for now)"
+fi
+
 if [ "$INSTALL_HOOKS" -eq 1 ]; then
   echo "▸ wiring Claude Code hooks…"
-  node dist/cli/index.js install
+  $CP install
 else
   echo "▸ skipping hook install (--no-hooks)"
 fi
 
 if [ "$LAUNCH" -eq 1 ]; then
   echo "▸ launching…"
-  # Replace any previous instance started from this dir, then start detached so
-  # it survives this shell closing.
-  pkill -f "$SRC_DIR/node_modules/.bin/electron" 2>/dev/null || true
-  nohup "$SRC_DIR/node_modules/.bin/electron" "$SRC_DIR" >/dev/null 2>&1 &
-  disown 2>/dev/null || true
-  echo "✓ Claude Pet is running (look for 🐾 in the menu bar)."
+  $CP start
 else
-  echo "✓ installed. Start it with:  npm start   (in $SRC_DIR)"
+  echo "✓ installed. Start it with:  $CP start"
 fi
 
 echo
-echo "  Import a pet:    node $SRC_DIR/dist/cli/index.js import <folder | .zip | URL>"
-echo "  Turn it off:     curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash"
+echo "  Change pet:   $CP import \"https://codex-pets.net/api/pets/<slug>/download\""
+echo "  Hide for now: $CP close"
+echo "  Turn it off:  $CP uninstall"

@@ -38,24 +38,28 @@ claude-pet import ./my-pet
 claude-pet import ./my-pet.zip
 ```
 
-> Not linked the `claude-pet` command yet? Use
-> `node ~/.claude-pet/app/dist/cli/index.js import …`.
+The installer puts a `claude-pet` command on your PATH, so all of this is just
+`claude-pet <command>` (run `claude-pet` with no args to see them all).
 
-### 3. Turn it off (permanently)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash
-```
-
-This removes the Claude Code hooks **and** quits the app — it won't come back.
-Add `-s -- --purge` to also delete the app, pets, and settings:
+### 3. Turn it off
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash -s -- --purge
+claude-pet close       # hide the pet for now (start it again with: claude-pet start)
+claude-pet uninstall   # the off switch: remove hooks AND quit the app
 ```
 
-(Right-clicking → Quit only closes the window for now; the one-liner above is
-the real off switch.)
+`uninstall` stops it coming back. To also delete the app, pets, and settings:
+
+```bash
+claude-pet uninstall && rm -rf ~/.claude-pet
+```
+
+> If the `claude-pet` command isn't on your PATH (global link failed), the same
+> off switch is available as a one-liner:
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash
+> # add  -s -- --purge  to also delete app/pets/settings
+> ```
 
 ---
 
@@ -86,8 +90,10 @@ the real off switch.)
 
 ```bash
 claude-pet install     # add hook entries to ~/.claude/settings.json
-claude-pet uninstall   # remove hook entries
-claude-pet status      # show install state + event log path
+claude-pet uninstall   # remove hooks AND quit the app (the off switch)
+claude-pet start       # launch the desktop pet
+claude-pet stop        # quit the desktop pet  (alias: close)
+claude-pet status      # show install + running state
 claude-pet import <src># import a pet pack (folder | .zip | http(s) .zip URL)
 ```
 

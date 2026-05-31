@@ -37,23 +37,28 @@ claude-pet import ./my-pet
 claude-pet import ./my-pet.zip
 ```
 
-> 还没有链接 `claude-pet` 命令？用
-> `node ~/.claude-pet/app/dist/cli/index.js import …` 代替。
+安装脚本会把 `claude-pet` 命令装到你的 PATH 上，所以上面这些都只是
+`claude-pet <命令>`（不带参数运行 `claude-pet` 可查看全部命令）。
 
-### 3. 关闭（永久）
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash
-```
-
-这会移除 Claude Code 钩子**并**退出应用——它不会再回来。加 `-s -- --purge`
-可同时删除应用本体、宠物和设置：
+### 3. 关闭
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash -s -- --purge
+claude-pet close       # 暂时收起宠物（再次启动：claude-pet start）
+claude-pet uninstall   # 关闭开关：移除钩子并退出应用
 ```
 
-（右键 → Quit 目前只是关闭窗口；上面这条一行命令才是真正的"关闭开关"。）
+`uninstall` 之后它不会再回来。若想连应用本体、宠物和设置一起删除：
+
+```bash
+claude-pet uninstall && rm -rf ~/.claude-pet
+```
+
+> 如果 `claude-pet` 命令不在 PATH 上（全局链接失败），同样的关闭开关也有
+> 一行命令版本：
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash
+> # 加 -s -- --purge 可同时删除应用/宠物/设置
+> ```
 
 ---
 
@@ -84,8 +89,10 @@ curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.s
 
 ```bash
 claude-pet install     # 向 ~/.claude/settings.json 添加钩子条目
-claude-pet uninstall   # 移除钩子条目
-claude-pet status      # 查看安装状态 + 事件日志路径
+claude-pet uninstall   # 移除钩子并退出应用（关闭开关）
+claude-pet start       # 启动桌面宠物
+claude-pet stop        # 退出桌面宠物（别名：close）
+claude-pet status      # 查看安装状态 + 运行状态
 claude-pet import <src># 导入宠物包（文件夹 | .zip | http(s) 的 .zip URL）
 ```
 

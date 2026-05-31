@@ -13,7 +13,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { importPet } from "../main/petLoader";
 
 const HOOK_EVENTS = [
@@ -82,15 +82,18 @@ function install() {
 
 function uninstall() {
   const s = loadSettings();
-  if (!s.hooks) { console.log("nothing to remove"); return; }
-  for (const event of Object.keys(s.hooks)) {
-    s.hooks[event] = (s.hooks[event] ?? []).filter(
-      (entry) => !entry.hooks?.some((h) => h.command?.includes(MARKER)),
-    );
-    if (s.hooks[event].length === 0) delete s.hooks[event];
+  if (s.hooks) {
+    for (const event of Object.keys(s.hooks)) {
+      s.hooks[event] = (s.hooks[event] ?? []).filter(
+        (entry) => !entry.hooks?.some((h) => h.command?.includes(MARKER)),
+      );
+      if (s.hooks[event].length === 0) delete s.hooks[event];
+    }
+    saveSettings(s);
   }
-  saveSettings(s);
-  console.log("✓ removed claude-pet hooks");
+  // The off switch: also quit the running pet so nothing lingers.
+  const wasRunning = stopApp(true);
+  console.log("✓ removed claude-pet hooks" + (wasRunning ? " and stopped the app" : ""));
 }
 
 function status() {
@@ -105,6 +108,7 @@ function status() {
   console.log(`hook script: ${hookScriptPath()}`);
   console.log(`settings:    ${settingsPath()}`);
   console.log(`installed:   ${found.length ? found.join(", ") : "(none)"}`);
+  console.log(`app:         ${isAppRunning() ? "running" : "stopped"}`);
   const log = path.join(
     process.env.CLAUDE_PET_HOME || path.join(os.homedir(), ".claude-pet"),
     "events.jsonl",
@@ -114,6 +118,83 @@ function status() {
 
 function petHome(): string {
   return process.env.CLAUDE_PET_HOME || path.join(os.homedir(), ".claude-pet");
+}
+
+/** App root = two levels up from dist/cli/index.js. Symlinks are resolved by
+ *  Node, so this is correct whether run locally or via an `npm link`ed bin. */
+function appRoot(): string {
+  return path.resolve(__dirname, "..", "..");
+}
+
+function pidFile(): string {
+  return path.join(petHome(), "app.pid");
+}
+
+/** Resolve the Electron executable. In plain Node, `require("electron")`
+ *  returns the path to the binary; fall back to the local .bin shim. */
+function electronExec(): string | null {
+  try {
+    const p = require("electron");
+    if (typeof p === "string" && fs.existsSync(p)) return p;
+  } catch {
+    /* electron not resolvable from here */
+  }
+  const local = path.join(appRoot(), "node_modules", ".bin", "electron");
+  return fs.existsSync(local) ? local : null;
+}
+
+/** Pattern that matches only this app's Electron process (not the CLI). */
+function appProcPattern(): string {
+  return path.join(appRoot(), "node_modules", "electron");
+}
+
+function isAppRunning(): boolean {
+  try {
+    execFileSync("pgrep", ["-f", appProcPattern()], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function startApp(): void {
+  stopApp(true); // replace any existing instance
+  const exec = electronExec();
+  if (!exec) {
+    console.error(`✗ could not find Electron — run \`npm install\` in ${appRoot()}`);
+    process.exit(1);
+  }
+  const child = spawn(exec, [appRoot()], { detached: true, stdio: "ignore" });
+  child.unref();
+  try {
+    fs.mkdirSync(petHome(), { recursive: true });
+    if (child.pid) fs.writeFileSync(pidFile(), String(child.pid));
+  } catch {
+    /* pidfile is best-effort; stop falls back to pgrep/pkill */
+  }
+  console.log("✓ Claude Pet is running (look for 🐾 in the menu bar).");
+}
+
+function stopApp(quiet = false): boolean {
+  let stopped = false;
+  // 1) PID recorded by `start`.
+  const pf = pidFile();
+  if (fs.existsSync(pf)) {
+    const pid = parseInt(fs.readFileSync(pf, "utf8").trim(), 10);
+    if (pid > 0) {
+      try { process.kill(pid); stopped = true; } catch { /* already gone */ }
+    }
+    try { fs.unlinkSync(pf); } catch { /* ignore */ }
+  }
+  // 2) Fallback: kill any Electron launched from this app dir (e.g. `npm start`).
+  try {
+    execFileSync("pkill", ["-f", appProcPattern()], { stdio: "ignore" });
+    stopped = true;
+  } catch { /* nothing matched */ }
+  if (!quiet) {
+    console.log(stopped ? "✓ stopped Claude Pet." : "  Claude Pet wasn't running.");
+  }
+  return stopped;
 }
 
 /** Locate the directory that contains a pet.json, searching breadth-first up
@@ -221,8 +302,17 @@ switch (cmd) {
   case "uninstall": uninstall(); break;
   case "status":    status(); break;
   case "import":    importCmd(process.argv[3]); break;
+  case "start":     startApp(); break;
+  case "stop":
+  case "close":
+  case "quit":      stopApp(); break;
   default:
-    console.log("usage: claude-pet <install|uninstall|status|import>");
-    console.log("       claude-pet import <folder | file.zip | https://…/pet.zip>");
+    console.log("usage: claude-pet <command>");
+    console.log("  install    add Claude Code hooks");
+    console.log("  uninstall  remove hooks and stop the app (the off switch)");
+    console.log("  start      launch the desktop pet");
+    console.log("  stop       quit the desktop pet  (alias: close)");
+    console.log("  status     show install + running state");
+    console.log("  import     import a pet pack (folder | .zip | https URL)");
     process.exit(cmd ? 1 : 0);
 }

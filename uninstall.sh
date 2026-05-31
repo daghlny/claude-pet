@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# claude-pet uninstaller — permanently stop it: remove hooks + quit the app.
+# claude-pet uninstaller — fallback for when the `claude-pet` command isn't on
+# your PATH. If it is, just run:  claude-pet uninstall
 #
 #   curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/uninstall.sh | bash
 #
@@ -18,20 +19,18 @@ for arg in "$@"; do
   esac
 done
 
-# 1) Remove the Claude Code hook entries (stops the pet from reacting at all).
-if [ -f "$APP_DIR/dist/cli/index.js" ]; then
-  echo "▸ removing Claude Code hooks…"
+# Remove hooks + stop the app via the CLI (linked command, else local build).
+if command -v claude-pet >/dev/null 2>&1; then
+  claude-pet uninstall || true
+elif [ -f "$APP_DIR/dist/cli/index.js" ]; then
   node "$APP_DIR/dist/cli/index.js" uninstall || true
 else
-  echo "▸ app build not found at $APP_DIR — skipping hook removal."
-  echo "  (If you ran it from another folder, run \`claude-pet uninstall\` there.)"
+  echo "▸ no claude-pet build found — only purge (if requested) will run."
 fi
 
-# 2) Quit the running app.
-echo "▸ quitting the app…"
-pkill -f "$APP_DIR/node_modules/.bin/electron" 2>/dev/null || true
+# Drop the global command symlink if we created one.
+npm rm -g claude-pet >/dev/null 2>&1 || true
 
-# 3) Optionally delete everything.
 if [ "$PURGE" -eq 1 ]; then
   echo "▸ purging $PET_HOME (app, pets, settings, event log)…"
   rm -rf "$PET_HOME"
