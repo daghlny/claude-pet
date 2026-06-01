@@ -5,7 +5,7 @@ import { EventTail } from "./eventTail";
 import { mapEventToAdvice } from "./stateMapper";
 import { focusSession } from "./focusTerminal";
 import { listPets, importPet, LoadedPet } from "./petLoader";
-import { loadSettings, saveSettings, AppSettings } from "./settings";
+import { loadSettings, saveSettings, settingsFilePath, AppSettings } from "./settings";
 import type { HookEvent, StateAdvice } from "../shared/types";
 
 const BUILTINS_DIR = path.join(__dirname, "..", "..", "assets", "pets");
@@ -142,6 +142,45 @@ function serializePet(p: LoadedPet) {
   };
 }
 
+/**
+ * Watch settings.json for external edits (e.g. `claude-pet switch <name>` or
+ * `claude-pet import <name>` from the CLI) and apply pet/scale changes live.
+ * Our own saveSettings() writes here too, but switchPet() leaves petSlug equal
+ * to what we just set, so the reload below no-ops — no write loop.
+ */
+function startSettingsWatcher() {
+  const p = settingsFilePath();
+  try {
+    fs.watch(p, { persistent: false }, () => {
+      // Debounce: editors/writes can fire multiple events.
+      if (settingsWatchTimer) clearTimeout(settingsWatchTimer);
+      settingsWatchTimer = setTimeout(applyExternalSettings, 150);
+    });
+  } catch (e) {
+    console.warn("[claude-pet] settings watch unavailable:", (e as Error).message);
+  }
+}
+
+function applyExternalSettings() {
+  let next: AppSettings;
+  try {
+    next = loadSettings();
+  } catch {
+    return;
+  }
+  if (next.petSlug !== settings.petSlug) {
+    switchPet(next.petSlug); // updates settings, window, tray
+  }
+  if (typeof next.scale === "number" && next.scale !== settings.scale) {
+    settings.scale = next.scale;
+    if (petWindow) {
+      const { w, h } = petSize();
+      petWindow.setSize(w, h + 60);
+      petWindow.webContents.send("pet:scale", settings.scale);
+    }
+  }
+}
+
 function startEventLoop() {
   tail = new EventTail();
   tail.on("event", (evt: HookEvent) => {
@@ -194,6 +233,7 @@ ipcMain.on("pet:contextmenu", () => {
 });
 ipcMain.handle("win:getpos", () => petWindow?.getPosition() ?? [0, 0]);
 let savePositionTimer: ReturnType<typeof setTimeout> | null = null;
+let settingsWatchTimer: ReturnType<typeof setTimeout> | null = null;
 ipcMain.on("win:move", (_e, x: number, y: number) => {
   const rx = Math.round(x);
   const ry = Math.round(y);
@@ -213,6 +253,7 @@ app.whenReady().then(() => {
   buildTray();
   createPetWindow();
   startEventLoop();
+  startSettingsWatcher();
 
   petWindow?.webContents.once("did-finish-load", () => {
     if (currentPet) petWindow!.webContents.send("pet:load", serializePet(currentPet));

@@ -22,23 +22,31 @@ curl -fsSL https://raw.githubusercontent.com/daghlny/claude-pet/main/install.sh 
 
 ### 2. 更换宠物素材
 
-打开 [codex-pets.net](https://codex-pets.net/)，挑一只宠物，记下它的 **slug**
-（页面 URL 的最后一段，例如 `deepseek`），然后：
+打开 [codex-pets.net](https://codex-pets.net/)（默认的宠物来源），挑一只宠物，
+记下它的**名字**（页面 URL 的最后一段，例如 `deepseek`），然后：
 
 ```bash
-claude-pet import "https://codex-pets.net/api/pets/deepseek/download"
+claude-pet import deepseek      # 从 codex-pets.net 下载，并直接切换过去
 ```
 
-右键点击宠物（或点菜单栏 🐾）→ 在列表里选中它即可。也可以导入本地文件夹或
-`.zip`：
+之前已经导入过？直接切换即可：
+
+```bash
+claude-pet switch deepseek      # 切换到已安装的宠物（实时生效，无需重启）
+```
+
+两者都会立刻作用到正在运行的宠物上。也可以导入本地文件夹、`.zip` 或任意直链
+URL：
 
 ```bash
 claude-pet import ./my-pet
 claude-pet import ./my-pet.zip
+claude-pet import https://example.com/my-pet.zip
 ```
 
-安装脚本会把 `claude-pet` 命令装到你的 PATH 上，所以上面这些都只是
-`claude-pet <命令>`（不带参数运行 `claude-pet` 可查看全部命令）。
+更喜欢用鼠标？右键点击宠物（或菜单栏 🐾 图标）即可切换形象、打开设置或退出。
+安装脚本会把 `claude-pet` 命令装到你的 PATH 上，所以命令行就是
+`claude-pet <命令>`（不带参数运行可查看全部命令）。
 
 ### 3. 关闭
 
@@ -88,13 +96,18 @@ claude-pet uninstall && rm -rf ~/.claude-pet
 ## CLI
 
 ```bash
-claude-pet install     # 向 ~/.claude/settings.json 添加钩子条目
-claude-pet uninstall   # 移除钩子并退出应用（关闭开关）
-claude-pet start       # 启动桌面宠物
-claude-pet stop        # 退出桌面宠物（别名：close）
-claude-pet status      # 查看安装状态 + 运行状态
-claude-pet import <src># 导入宠物包（文件夹 | .zip | http(s) 的 .zip URL）
+claude-pet install        # 向 ~/.claude/settings.json 添加钩子条目
+claude-pet uninstall      # 移除钩子并退出应用（关闭开关）
+claude-pet start          # 启动桌面宠物
+claude-pet stop           # 退出桌面宠物（别名：close）
+claude-pet status         # 查看安装状态 + 运行状态
+claude-pet import <name>  # 安装一只宠物并切换过去。<name> 是 codex-pets.net 的
+                          # 宠物名；也接受本地文件夹 / .zip / URL
+claude-pet switch <name>  # 切换到已安装的宠物（实时生效）
 ```
+
+`import` 和 `switch` 会立即作用到正在运行的宠物（app 会监听它的设置文件）。
+你也可以右键点击宠物，从菜单里切换形象或退出。
 
 ## 手动安装
 

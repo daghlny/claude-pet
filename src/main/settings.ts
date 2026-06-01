@@ -16,6 +16,11 @@ function file() {
   return path.join(home, "settings.json");
 }
 
+/** Absolute path to the settings file (exported for the settings watcher). */
+export function settingsFilePath(): string {
+  return file();
+}
+
 export function loadSettings(): AppSettings {
   try {
     const raw = fs.readFileSync(file(), "utf8");

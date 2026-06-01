@@ -14,7 +14,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { execFileSync, spawn } from "child_process";
-import { importPet } from "../main/petLoader";
+import { importPet, listPets } from "../main/petLoader";
+
+/** Default pet source: codex-pets.net. A bare name resolves to its download. */
+const CODEX_PETS_DOWNLOAD = (slug: string) =>
+  `https://codex-pets.net/api/pets/${encodeURIComponent(slug)}/download`;
 
 const HOOK_EVENTS = [
   "SessionStart",
@@ -197,6 +201,47 @@ function stopApp(quiet = false): boolean {
   return stopped;
 }
 
+function settingsFile(): string {
+  return path.join(petHome(), "settings.json");
+}
+
+/** All installed pet slugs (built-ins + ~/.claude-pet/pets). */
+function knownSlugs(): string[] {
+  const builtins = path.join(appRoot(), "assets", "pets");
+  return listPets(builtins).map((p) => p.manifest.slug);
+}
+
+/** Set the active pet. Writes settings.petSlug; a running app watches the file
+ *  and switches live, so this works whether or not the app is up. */
+function switchTo(slug: string): boolean {
+  const home = petHome();
+  fs.mkdirSync(home, { recursive: true });
+  const f = settingsFile();
+  let s: Record<string, unknown> = {};
+  if (fs.existsSync(f)) {
+    try { s = JSON.parse(fs.readFileSync(f, "utf8")); } catch { s = {}; }
+  }
+  s.petSlug = slug;
+  fs.writeFileSync(f, JSON.stringify(s, null, 2));
+  return isAppRunning();
+}
+
+function switchCmd(name: string | undefined) {
+  if (!name) {
+    console.error("usage: claude-pet switch <name>");
+    console.error(`  installed: ${knownSlugs().join(", ") || "(none)"}`);
+    process.exit(1);
+  }
+  const slugs = knownSlugs();
+  if (!slugs.includes(name)) {
+    console.error(`✗ no pet named "${name}". Installed: ${slugs.join(", ") || "(none)"}`);
+    console.error(`  import it first:  claude-pet import ${name}`);
+    process.exit(1);
+  }
+  const live = switchTo(name);
+  console.log(`✓ switched to ${name}` + (live ? "" : " (will show next time the app starts)"));
+}
+
 /** Locate the directory that contains a pet.json, searching breadth-first up
  *  to a few levels deep (zips often wrap the pack in a top-level folder). */
 function findPetDir(root: string, maxDepth = 3): string | null {
@@ -246,7 +291,8 @@ function download(url: string, destPath: string): void {
 
 function importCmd(source: string | undefined) {
   if (!source) {
-    console.error("usage: claude-pet import <folder | file.zip | https://…/pet.zip>");
+    console.error("usage: claude-pet import <name | folder | file.zip | https URL>");
+    console.error("  a bare <name> is fetched from codex-pets.net, e.g.  claude-pet import deepseek");
     process.exit(1);
   }
 
@@ -255,18 +301,20 @@ function importCmd(source: string | undefined) {
   try {
     let petDir: string;
 
-    if (/^https?:\/\//i.test(source)) {
-      // Remote zip.
+    const isUrl = /^https?:\/\//i.test(source);
+    const isPath = fs.existsSync(source);
+    // A bare name (not a URL, not an existing path) → codex-pets.net download.
+    const url = isUrl ? source : isPath ? null : CODEX_PETS_DOWNLOAD(source);
+
+    if (url) {
       const zip = path.join(tmpRoot, "pack.zip");
-      console.log(`↓ downloading ${source}`);
-      download(source, zip);
+      console.log(isUrl ? `↓ downloading ${url}` : `↓ fetching "${source}" from codex-pets.net`);
+      download(url, zip);
       const ex = path.join(tmpRoot, "extracted");
       extractZip(zip, ex);
       const found = findPetDir(ex);
-      if (!found) throw new Error("no pet.json found inside the downloaded zip");
+      if (!found) throw new Error(`no pet.json found — is "${source}" a real codex-pets name?`);
       petDir = found;
-    } else if (!fs.existsSync(source)) {
-      throw new Error(`no such file or directory: ${source}`);
     } else if (fs.statSync(source).isDirectory()) {
       // Local folder — import in place (don't keep the temp dir).
       cleanup = false;
@@ -282,12 +330,19 @@ function importCmd(source: string | undefined) {
       if (!found) throw new Error("no pet.json found inside the zip");
       petDir = found;
     } else {
-      throw new Error(`unsupported source (expected a folder, a .zip, or an http(s) .zip URL): ${source}`);
+      throw new Error(`unsupported source (expected a name, a folder, a .zip, or an http(s) URL): ${source}`);
     }
 
     const dest = importPet(petDir);
+    const slug = path.basename(dest);
     console.log(`✓ imported pet → ${dest}`);
-    console.log("  restart Claude Pet (or it'll pick it up on next launch) and select it from the tray.");
+    // Auto-switch to the freshly imported pet.
+    const live = switchTo(slug);
+    console.log(
+      live
+        ? `✓ switched to ${slug}`
+        : `✓ set ${slug} as the active pet (start the app to see it: claude-pet start)`,
+    );
   } catch (e) {
     console.error(`✗ import failed: ${(e as Error).message}`);
     process.exitCode = 1;
@@ -302,17 +357,23 @@ switch (cmd) {
   case "uninstall": uninstall(); break;
   case "status":    status(); break;
   case "import":    importCmd(process.argv[3]); break;
+  case "switch":    switchCmd(process.argv[3]); break;
   case "start":     startApp(); break;
   case "stop":
   case "close":
   case "quit":      stopApp(); break;
   default:
     console.log("usage: claude-pet <command>");
-    console.log("  install    add Claude Code hooks");
-    console.log("  uninstall  remove hooks and stop the app (the off switch)");
-    console.log("  start      launch the desktop pet");
-    console.log("  stop       quit the desktop pet  (alias: close)");
-    console.log("  status     show install + running state");
-    console.log("  import     import a pet pack (folder | .zip | https URL)");
+    console.log("  install        add Claude Code hooks");
+    console.log("  uninstall      remove hooks and stop the app (the off switch)");
+    console.log("  start          launch the desktop pet");
+    console.log("  stop           quit the desktop pet  (alias: close)");
+    console.log("  status         show install + running state");
+    console.log("  import <name>  install a pet and switch to it");
+    console.log("                 <name> is a codex-pets.net pet (e.g. deepseek);");
+    console.log("                 also accepts a local folder, a .zip, or an https URL");
+    console.log("  switch <name>  switch to an already-installed pet");
+    console.log("");
+    console.log("  tip: you can also right-click the pet to control it (switch, settings, quit).");
     process.exit(cmd ? 1 : 0);
 }

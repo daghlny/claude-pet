@@ -23,23 +23,31 @@ prompts, completions, and errors.
 
 ### 2. Use a different pet
 
-Browse [codex-pets.net](https://codex-pets.net/), pick a pet, note its **slug**
-(the last part of its page URL, e.g. `deepseek`), then:
+Browse [codex-pets.net](https://codex-pets.net/) — the default pet source — pick
+a pet, note its **name** (the last part of its page URL, e.g. `deepseek`), then:
 
 ```bash
-claude-pet import "https://codex-pets.net/api/pets/deepseek/download"
+claude-pet import deepseek      # downloads from codex-pets.net AND switches to it
 ```
 
-Right-click the pet (or the 🐾 menu) → pick it from the list. You can also
-import a local folder or `.zip`:
+Already imported it before? Just switch:
+
+```bash
+claude-pet switch deepseek      # switch to an installed pet (live, no restart)
+```
+
+Both take effect immediately on the running pet. You can also import a local
+folder, a `.zip`, or any direct URL:
 
 ```bash
 claude-pet import ./my-pet
 claude-pet import ./my-pet.zip
+claude-pet import https://example.com/my-pet.zip
 ```
 
-The installer puts a `claude-pet` command on your PATH, so all of this is just
-`claude-pet <command>` (run `claude-pet` with no args to see them all).
+Prefer the mouse? Right-click the pet (or the 🐾 menu bar icon) to switch pets,
+open settings, or quit. The installer puts a `claude-pet` command on your PATH,
+so the CLI is just `claude-pet <command>` (run it with no args to see them all).
 
 ### 3. Turn it off
 
@@ -89,13 +97,18 @@ claude-pet uninstall && rm -rf ~/.claude-pet
 ## CLI
 
 ```bash
-claude-pet install     # add hook entries to ~/.claude/settings.json
-claude-pet uninstall   # remove hooks AND quit the app (the off switch)
-claude-pet start       # launch the desktop pet
-claude-pet stop        # quit the desktop pet  (alias: close)
-claude-pet status      # show install + running state
-claude-pet import <src># import a pet pack (folder | .zip | http(s) .zip URL)
+claude-pet install        # add hook entries to ~/.claude/settings.json
+claude-pet uninstall      # remove hooks AND quit the app (the off switch)
+claude-pet start          # launch the desktop pet
+claude-pet stop           # quit the desktop pet  (alias: close)
+claude-pet status         # show install + running state
+claude-pet import <name>  # install a pet and switch to it. <name> is a
+                          # codex-pets.net pet; also accepts a folder/.zip/URL
+claude-pet switch <name>  # switch to an already-installed pet (live)
 ```
+
+`import` and `switch` apply to a running pet immediately (the app watches its
+settings file). You can also right-click the pet to switch/quit from the menu.
 
 ## Manual install
 
