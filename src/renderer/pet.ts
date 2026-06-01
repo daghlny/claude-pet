@@ -36,13 +36,25 @@ let bubbleTimeout: ReturnType<typeof setTimeout> | null = null;
 // animation cycle too fast / read across cell boundaries.
 let detectedCols = 0;
 let detectedRows = 0;
+// Per-row count of frames that actually contain pixels. The grid width is an
+// upper bound, not the animation length: codex packs are 8 columns wide but
+// most rows only use ~6 frames, leaving the trailing cells transparent. If we
+// cycled across the full column count the pet would blink out of existence on
+// those empty frames (and, at the right edge, slice past the sheet entirely).
+// Computed by scanning the sheet in onLoad.
+let rowFrameCounts: number[] = [];
 const DEFAULT_FRAME_MS = 220; // calm cadence ≈ codex; ~1.8s for an 8-frame loop
 
 function frameW() { return manifest?.frame?.w ?? 192; }
 function frameH() { return manifest?.frame?.h ?? 208; }
 function frameCount(state: string): number {
-  // Explicit per-state override wins; otherwise use the detected column count.
-  return manifest?.frames?.[state] ?? (detectedCols || 6);
+  // Explicit per-state override wins.
+  const explicit = manifest?.frames?.[state];
+  if (typeof explicit === "number") return explicit;
+  // Otherwise use the scanned per-row count, falling back to detected cols.
+  const row = STATE_ROWS.indexOf(state);
+  const scanned = row >= 0 ? rowFrameCounts[row] : 0;
+  return scanned || detectedCols || 6;
 }
 function frameMs(state: string): number {
   const dur = manifest?.durations?.[state];
@@ -63,10 +75,15 @@ function draw() {
   if (row < 0) return;
   // Don't index past the sheet's real row count (packs with fewer rows).
   if (detectedRows && row >= detectedRows) row = 0;
+  // Clamp the frame so a slice can never run off the right edge of the sheet
+  // (which would draw nothing and make the pet vanish). frameIdx is also
+  // wrapped in tick(), but guard here too since draw() runs on load/switch.
+  const count = Math.max(1, frameCount(currentState));
+  const idx = frameIdx % count;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(
     sheet,
-    frameIdx * frameW(),
+    idx * frameW(),
     row * frameH(),
     frameW(),
     frameH(),
@@ -107,17 +124,52 @@ function showBubble(text: string, ms = 4000) {
 cp.onLoad((p: LoadPayload) => {
   manifest = p.manifest;
   scale = p.scale;
+  // Clear stale sheet/scan from the previous pet so a switch can never draw the
+  // old sheet (or animate past the new one) in the window before this image
+  // decodes.
+  sheet = null;
+  rowFrameCounts = [];
+  frameIdx = 0;
   resize();
   const img = new Image();
   img.onload = () => {
-    sheet = img;
     detectedCols = Math.max(1, Math.round(img.naturalWidth / frameW()));
     detectedRows = Math.max(1, Math.round(img.naturalHeight / frameH()));
+    rowFrameCounts = scanRowFrameCounts(img, detectedCols, detectedRows);
+    sheet = img;
     frameIdx = 0;
     draw();
   };
   img.src = p.spritesheetUrl;
 });
+
+/** Count the trailing-non-empty frames per row. A frame counts as "used" if it
+ *  has any non-transparent pixel; we take the highest used frame index + 1 so a
+ *  gap in the middle still animates, but trailing empty cells are dropped. */
+function scanRowFrameCounts(img: HTMLImageElement, cols: number, rows: number): number[] {
+  const fw = frameW();
+  const fh = frameH();
+  const off = document.createElement("canvas");
+  off.width = img.naturalWidth;
+  off.height = img.naturalHeight;
+  const octx = off.getContext("2d", { willReadFrequently: true });
+  if (!octx) return [];
+  octx.drawImage(img, 0, 0);
+  const counts: number[] = [];
+  for (let r = 0; r < rows; r++) {
+    let lastUsed = -1;
+    for (let c = 0; c < cols; c++) {
+      const data = octx.getImageData(c * fw, r * fh, fw, fh).data;
+      let used = false;
+      for (let i = 3; i < data.length; i += 4) {
+        if (data[i] > 0) { used = true; break; }
+      }
+      if (used) lastUsed = c;
+    }
+    counts[r] = lastUsed + 1; // 0 if the whole row is empty
+  }
+  return counts;
+}
 
 cp.onScale((s: number) => { scale = s; resize(); });
 
