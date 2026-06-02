@@ -205,6 +205,125 @@ function settingsFile(): string {
   return path.join(petHome(), "settings.json");
 }
 
+// ── self-update ──────────────────────────────────────────────────────────────
+
+/** How often to fetch upstream for the passive "you're behind" reminder. */
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function isGitCheckout(dir: string): boolean {
+  return fs.existsSync(path.join(dir, ".git"));
+}
+
+function updateCacheFile(): string {
+  return path.join(petHome(), "update-check.json");
+}
+
+function readUpdateCache(): { lastCheck: number; behind: number } | null {
+  try {
+    return JSON.parse(fs.readFileSync(updateCacheFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeUpdateCache(c: { lastCheck: number; behind: number }): void {
+  try {
+    fs.mkdirSync(petHome(), { recursive: true });
+    fs.writeFileSync(updateCacheFile(), JSON.stringify(c));
+  } catch {
+    /* cache is best-effort */
+  }
+}
+
+/** Number of commits the local checkout is behind its upstream branch. Fetches
+ *  from the remote (short timeout). Returns 0 on any error or if no upstream. */
+function fetchBehindCount(root: string): number {
+  try {
+    execFileSync("git", ["fetch", "--quiet"], { cwd: root, timeout: 5000, stdio: "ignore" });
+    const out = execFileSync("git", ["rev-list", "--count", "HEAD..@{u}"], {
+      cwd: root,
+      timeout: 5000,
+      encoding: "utf8",
+    }).trim();
+    return parseInt(out, 10) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Throttled, non-fatal: print a reminder when the checkout is behind upstream.
+ *  Hits the network at most once per UPDATE_CHECK_INTERVAL_MS; never throws. */
+function maybeNotifyUpdate(): void {
+  const root = appRoot();
+  if (!isGitCheckout(root)) return;
+  const now = Date.now();
+  const cache = readUpdateCache();
+  let behind: number;
+  if (cache && now - cache.lastCheck < UPDATE_CHECK_INTERVAL_MS) {
+    behind = cache.behind;
+  } else {
+    behind = fetchBehindCount(root);
+    writeUpdateCache({ lastCheck: now, behind });
+  }
+  if (behind > 0) {
+    const s = behind === 1 ? "" : "s";
+    console.error(`\n  ⓘ A new claude-pet version is available (${behind} commit${s} behind).`);
+    console.error("    Run `claude-pet update` to get it.\n");
+  }
+}
+
+function gitHead(root: string): string {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** Pull the latest source, rebuild, and restart the app if it was running. */
+function update() {
+  const root = appRoot();
+  if (!isGitCheckout(root)) {
+    console.error(`✗ not a git checkout: ${root}`);
+    console.error("  re-run the installer to enable `claude-pet update`.");
+    process.exit(1);
+  }
+
+  console.log(`▸ pulling latest into ${root}…`);
+  const before = gitHead(root);
+  try {
+    execFileSync("git", ["pull", "--ff-only"], { cwd: root, stdio: "inherit" });
+  } catch {
+    console.error("✗ git pull failed — resolve the issue above, then retry.");
+    process.exit(1);
+  }
+  const after = gitHead(root);
+  // Reset the passive-reminder cache: we're current as of now.
+  writeUpdateCache({ lastCheck: Date.now(), behind: 0 });
+
+  if (before && before === after) {
+    console.log("✓ already up to date.");
+    return;
+  }
+
+  console.log("▸ rebuilding…");
+  try {
+    const npm = (args: string[]) => execFileSync("npm", args, { cwd: root, stdio: "inherit" });
+    npm(["install"]);
+    npm(["run", "gen:builtins"]);
+    npm(["run", "build"]);
+  } catch {
+    console.error("✗ rebuild failed — see the output above.");
+    process.exit(1);
+  }
+
+  if (isAppRunning()) {
+    console.log("▸ restarting the app…");
+    startApp();
+  }
+  console.log("✓ updated to the latest version.");
+}
+
 /** All installed pet slugs (built-ins + ~/.claude-pet/pets). */
 function knownSlugs(): string[] {
   const builtins = path.join(appRoot(), "assets", "pets");
@@ -352,9 +471,17 @@ function importCmd(source: string | undefined) {
 }
 
 const cmd = process.argv[2];
+
+// Passive, throttled "you're behind" reminder on every command except the
+// updater itself (which checks for real). Never blocks beyond a short fetch.
+if (cmd && cmd !== "update") {
+  try { maybeNotifyUpdate(); } catch { /* never let the check break a command */ }
+}
+
 switch (cmd) {
   case "install":   install(); break;
   case "uninstall": uninstall(); break;
+  case "update":    update(); break;
   case "status":    status(); break;
   case "import":    importCmd(process.argv[3]); break;
   case "switch":    switchCmd(process.argv[3]); break;
@@ -368,6 +495,7 @@ switch (cmd) {
     console.log("  uninstall      remove hooks and stop the app (the off switch)");
     console.log("  start          launch the desktop pet");
     console.log("  stop           quit the desktop pet  (alias: close)");
+    console.log("  update         pull the latest version, rebuild, and restart");
     console.log("  status         show install + running state");
     console.log("  import <name>  install a pet and switch to it");
     console.log("                 <name> is a codex-pets.net pet (e.g. deepseek);");
