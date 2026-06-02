@@ -10,6 +10,11 @@ import type { HookEvent, StateAdvice } from "../shared/types";
 
 const BUILTINS_DIR = path.join(__dirname, "..", "..", "assets", "pets");
 
+// setIgnoreMouseEvents' `forward` option (needed so the renderer keeps getting
+// mousemove while the window ignores the mouse) is documented macOS/Windows
+// only. Per-pixel click-through is gated to these; the renderer mirrors this.
+const CLICK_THROUGH_CAPABLE = process.platform === "darwin" || process.platform === "win32";
+
 let petWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -45,13 +50,34 @@ function createPetWindow() {
     hasShadow: false,
     focusable: false,
     movable: true,
+    // macOS: make it a non-activating NSPanel. A panel floats over other apps'
+    // fullscreen spaces and never steals key focus — the correct primitive for
+    // a desktop pet. (This is how Codex's own mascot window is created.)
+    ...(process.platform === "darwin" ? { type: "panel" } : {}),
     webPreferences: {
       preload: path.join(__dirname, "..", "preload", "index.js"),
       contextIsolation: true,
     },
   });
   petWindow.setAlwaysOnTop(true, "floating");
-  petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  petWindow.setVisibleOnAllWorkspaces(true, {
+    visibleOnFullScreen: true,
+    // We're already an accessory app (app.dock.hide() runs before this), so
+    // this suppresses the brief dock/process-type flip macOS would otherwise
+    // do when the window joins all workspaces.
+    skipTransformProcessType: true,
+  });
+  // Per-pixel click-through. Start out ignoring the mouse; the renderer flips
+  // the window back to interactive only while the cursor is over an opaque
+  // sprite pixel (see pet.ts). forward:true keeps mousemove/mouseleave flowing
+  // so the renderer can hit-test. Net effect: transparent margins and the
+  // bubble strip pass clicks through to whatever is behind the pet, while the
+  // body stays draggable/clickable.
+  // Only on platforms where `forward` is supported (macOS/Windows). On Linux
+  // forwarding doesn't work, so we'd never detect the cursor re-entering and
+  // the pet would get stuck click-through — there we leave it interactive and
+  // rely on ghost mode for explicit pass-through.
+  if (CLICK_THROUGH_CAPABLE) petWindow.setIgnoreMouseEvents(true, { forward: true });
   petWindow.loadFile(path.join(__dirname, "..", "renderer", "pet.html"));
 
   petWindow.on("moved", () => {
@@ -100,6 +126,12 @@ function menuTemplate(): Electron.MenuItemConstructorOptions[] {
     { type: "separator" },
     { label: "Pets", submenu: petItems.length ? petItems : [{ label: "(none)", enabled: false }] },
     { label: "Settings…", click: createSettingsWindow },
+    {
+      label: "Click-through (ghost mode)",
+      type: "checkbox" as const,
+      checked: !!settings.clickThrough,
+      click: () => toggleClickThrough(),
+    },
     { label: "Reveal events log", click: revealEventLog },
     { type: "separator" },
     { label: "Quit Claude Pet", click: () => app.quit() },
@@ -109,6 +141,24 @@ function menuTemplate(): Electron.MenuItemConstructorOptions[] {
 function refreshTrayMenu() {
   if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate(menuTemplate()));
+}
+
+/** Push the current ghost-mode flag to every window that cares: the pet (which
+ *  acts on it) and an open settings window (so its checkbox stays in sync). */
+function broadcastGhost() {
+  const on = !!settings.clickThrough;
+  petWindow?.webContents.send("pet:ghost", on);
+  settingsWindow?.webContents.send("pet:ghost", on);
+}
+
+/** Flip "ghost mode" on/off: persist, tell the renderer, refresh the menu tick.
+ *  The actual setIgnoreMouseEvents call is driven by the renderer's hit-test so
+ *  the two passthrough modes (per-pixel vs. full) share one code path. */
+function toggleClickThrough() {
+  settings.clickThrough = !settings.clickThrough;
+  saveSettings(settings);
+  broadcastGhost();
+  refreshTrayMenu();
 }
 
 function revealEventLog() {
@@ -150,8 +200,15 @@ function serializePet(p: LoadedPet) {
  */
 function startSettingsWatcher() {
   const p = settingsFilePath();
+  const dir = path.dirname(p);
+  const base = path.basename(p);
   try {
-    fs.watch(p, { persistent: false }, () => {
+    // Watch the directory, not the file: settings.json may not exist yet on a
+    // fresh install (loadSettings creates the dir but not the file), and
+    // editors/CLIs that replace-on-save would break a file-level watch. Filter
+    // to our file so the busy events.jsonl in the same dir doesn't wake us.
+    fs.watch(dir, { persistent: false }, (_evt, filename) => {
+      if (filename && filename !== base) return;
       // Debounce: editors/writes can fire multiple events.
       if (settingsWatchTimer) clearTimeout(settingsWatchTimer);
       settingsWatchTimer = setTimeout(applyExternalSettings, 150);
@@ -179,6 +236,11 @@ function applyExternalSettings() {
       petWindow.webContents.send("pet:scale", settings.scale);
     }
   }
+  if (!!next.clickThrough !== !!settings.clickThrough) {
+    settings.clickThrough = !!next.clickThrough;
+    broadcastGhost();
+    refreshTrayMenu();
+  }
 }
 
 function startEventLoop() {
@@ -200,6 +262,10 @@ ipcMain.handle("settings:save", (_e, next: Partial<AppSettings>) => {
     const { w, h } = petSize();
     petWindow.setSize(w, h + 60);
     petWindow.webContents.send("pet:scale", settings.scale);
+  }
+  if (typeof next.clickThrough === "boolean") {
+    broadcastGhost();
+    refreshTrayMenu();
   }
   return settings;
 });
@@ -231,6 +297,14 @@ ipcMain.on("pet:contextmenu", () => {
   if (!petWindow) return;
   Menu.buildFromTemplate(menuTemplate()).popup({ window: petWindow });
 });
+// Renderer drives per-pixel passthrough: ignore the mouse over transparent
+// areas (forward:true so we still get mousemove to detect re-entry), capture
+// it over the sprite body. See pet.ts.
+ipcMain.on("pet:ignoreMouse", (_e, ignore: boolean) => {
+  if (!petWindow) return;
+  if (ignore) petWindow.setIgnoreMouseEvents(true, { forward: true });
+  else petWindow.setIgnoreMouseEvents(false);
+});
 ipcMain.handle("win:getpos", () => petWindow?.getPosition() ?? [0, 0]);
 let savePositionTimer: ReturnType<typeof setTimeout> | null = null;
 let settingsWatchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -257,6 +331,7 @@ app.whenReady().then(() => {
 
   petWindow?.webContents.once("did-finish-load", () => {
     if (currentPet) petWindow!.webContents.send("pet:load", serializePet(currentPet));
+    petWindow!.webContents.send("pet:ghost", !!settings.clickThrough);
   });
 });
 

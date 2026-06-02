@@ -6,6 +6,10 @@ export interface AppSettings {
   petSlug: string;
   scale: number;
   position?: { x: number; y: number };
+  /** "Ghost mode": when true the pet ignores the mouse entirely and all clicks
+   *  pass through to whatever is behind it. When false the pet is interactive
+   *  over its opaque pixels and click-through only on transparent areas. */
+  clickThrough?: boolean;
 }
 
 const DEFAULTS: AppSettings = { petSlug: "blob", scale: 0.5 };

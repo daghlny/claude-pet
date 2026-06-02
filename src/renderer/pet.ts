@@ -18,7 +18,10 @@ interface StatePayload {
 const STATE_ROWS = ["idle", "wave", "run", "failed", "review", "jump", "extra1", "extra2"];
 
 const canvas = document.getElementById("pet") as HTMLCanvasElement;
-const ctx = canvas.getContext("2d")!;
+// willReadFrequently: the click-through hit-test reads 1px of alpha per
+// mousemove (see isOverPet). The sprite is tiny and animates slowly, so a
+// CPU-backed canvas is fine and this avoids Chromium's readback warning.
+const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 const bubble = document.getElementById("bubble") as HTMLDivElement;
 
 let sheet: HTMLImageElement | null = null;
@@ -101,6 +104,8 @@ function tick(now: number) {
       frameIdx = (frameIdx + 1) % frameCount(currentState);
       lastFrameMs = now;
       draw();
+      // The silhouette just changed — re-test clickability under the cursor.
+      reevalPassthrough();
     }
   }
   requestAnimationFrame(tick);
@@ -112,6 +117,7 @@ function setState(state: string) {
   frameIdx = 0;
   lastFrameMs = 0;
   draw();
+  reevalPassthrough(); // new state → new silhouette under the cursor
 }
 
 function showBubble(text: string, ms = 4000) {
@@ -139,6 +145,7 @@ cp.onLoad((p: LoadPayload) => {
     sheet = img;
     frameIdx = 0;
     draw();
+    reevalPassthrough(); // a different pack has a different silhouette
   };
   img.src = p.spritesheetUrl;
 });
@@ -171,7 +178,7 @@ function scanRowFrameCounts(img: HTMLImageElement, cols: number, rows: number): 
   return counts;
 }
 
-cp.onScale((s: number) => { scale = s; resize(); });
+cp.onScale((s: number) => { scale = s; resize(); reevalPassthrough(); });
 
 cp.onState((s: StatePayload) => {
   setState(s.state);
@@ -193,6 +200,76 @@ let baseY = 0;
 let moved = false;
 const DRAG_THRESHOLD = 4;
 
+// --- Per-pixel click-through ------------------------------------------------
+// The window is created ignoring the mouse (main: setIgnoreMouseEvents true,
+// forward:true), so forwarded mousemove events still reach us. We flip the
+// window back to interactive only while the cursor sits over an opaque sprite
+// pixel; transparent margins and the bubble strip therefore pass clicks
+// through to whatever is behind the pet. "Ghost mode" forces full pass-through
+// regardless of the pixel under the cursor.
+//
+// PER_PIXEL mirrors main: setIgnoreMouseEvents' `forward` is macOS/Windows
+// only, so on other platforms the window stays interactive over its whole
+// bounds and `interactive` starts true (matching main, which doesn't enable
+// the initial pass-through there). Ghost mode still works everywhere because
+// it's an explicit toggle, not dependent on detecting cursor re-entry.
+const PER_PIXEL = cp.platform === "darwin" || cp.platform === "win32";
+let ghostMode = false;
+let interactive = !PER_PIXEL; // mirror of !ignoreMouseEvents, to avoid redundant IPC
+// Last cursor position (window coords). The animation loop re-tests it when the
+// frame changes so clickability follows the *visible* frame, not whichever
+// frame happened to be showing at the last mousemove.
+let lastClientX = 0;
+let lastClientY = 0;
+let haveCursor = false;
+
+function setInteractive(v: boolean) {
+  if (v === interactive) return;
+  interactive = v;
+  cp.setIgnoreMouse(!v);
+}
+
+function isOverPet(clientX: number, clientY: number): boolean {
+  if (ghostMode || !sheet) return false;
+  const r = canvas.getBoundingClientRect();
+  if (clientX < r.left || clientX >= r.right || clientY < r.top || clientY >= r.bottom) {
+    return false;
+  }
+  const cx = Math.floor(((clientX - r.left) / r.width) * canvas.width);
+  const cy = Math.floor(((clientY - r.top) / r.height) * canvas.height);
+  try {
+    // Alpha of the currently-drawn frame at the cursor. >8 skips near-empty
+    // antialiased edges so the hot zone hugs the visible body.
+    return ctx.getImageData(cx, cy, 1, 1).data[3] > 8;
+  } catch {
+    return true; // if a readback ever fails, stay clickable rather than dead
+  }
+}
+
+/** Re-derive click-through from the last known cursor position. Called on
+ *  mousemove, on each new animation frame, and after resize/state changes so a
+ *  stationary cursor over an animating edge can't get stuck un/clickable. */
+function reevalPassthrough() {
+  if (!PER_PIXEL || dragging || !haveCursor) return;
+  setInteractive(isOverPet(lastClientX, lastClientY));
+}
+
+cp.onGhost((on: boolean) => {
+  ghostMode = on;
+  if (on) {
+    // Abort any in-flight drag: once the window ignores the mouse, button-up is
+    // never delivered, so a live drag would otherwise never end (pet stuck to
+    // the cursor). Then drop to full pass-through.
+    dragging = false;
+    moved = false;
+    setInteractive(false);
+  } else if (PER_PIXEL) {
+    reevalPassthrough(); // back to per-pixel from the current cursor
+  } else {
+    setInteractive(true); // no per-pixel here → interactive over the bounds
+  }
+});
+
 canvas.addEventListener("mousedown", async (e) => {
   if (e.button !== 0) return; // only left button drags; right opens the menu
   dragging = true;
@@ -213,17 +290,39 @@ canvas.addEventListener("contextmenu", (e) => {
 });
 
 window.addEventListener("mousemove", (e) => {
-  if (!dragging) return;
-  const dx = e.screenX - startSX;
-  const dy = e.screenY - startSY;
-  if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) moved = true;
-  if (moved) cp.moveWin(baseX + dx, baseY + dy);
+  if (dragging) {
+    const dx = e.screenX - startSX;
+    const dy = e.screenY - startSY;
+    if (Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) moved = true;
+    if (moved) cp.moveWin(baseX + dx, baseY + dy);
+    return;
+  }
+  // Not dragging: record the cursor and drive click-through from the pixel
+  // under it. (On platforms without per-pixel support we just track position.)
+  lastClientX = e.clientX;
+  lastClientY = e.clientY;
+  haveCursor = true;
+  if (PER_PIXEL) setInteractive(isOverPet(e.clientX, e.clientY));
 });
 
-window.addEventListener("mouseup", () => {
+// Cursor left the window entirely → back to pass-through. (forward:true makes
+// mouseleave fire even while the window is ignoring the mouse.) Listen on
+// <html>, which fills the window — mouseleave on `document` is unreliable.
+document.documentElement.addEventListener("mouseleave", () => {
+  haveCursor = false;
+  if (PER_PIXEL && !dragging) setInteractive(false);
+});
+
+window.addEventListener("mouseup", (e) => {
   if (!dragging) return;
   dragging = false;
   if (!moved) cp.click(); // a tap, not a drag → jump to terminal
+  // Re-evaluate pass-through at the release point so we don't stay glued
+  // interactive if the drag ended over a transparent area.
+  lastClientX = e.clientX;
+  lastClientY = e.clientY;
+  haveCursor = true;
+  if (PER_PIXEL) setInteractive(isOverPet(e.clientX, e.clientY));
 });
 
 requestAnimationFrame(tick);
