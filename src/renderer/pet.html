@@ -40,8 +40,19 @@
         justify-content: center;
         -webkit-app-region: no-drag;
       }
-      canvas { image-rendering: pixelated; cursor: grab; }
+      canvas {
+        image-rendering: pixelated;
+        cursor: grab;
+        transform-origin: center bottom;
+        transition: transform 0.16s ease-out;
+      }
       canvas:active { cursor: grabbing; }
+      /* Press/drag feedback: shrink slightly while being dragged (matches the
+         Codex pet's scale-95). */
+      canvas.dragging { transform: scale(0.95); }
+      @media (prefers-reduced-motion: reduce) {
+        canvas { transition: none; }
+      }
     </style>
   </head>
   <body>
